@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Новая ловушка — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block section_name %}Новая ловушка{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div><h1>Новая ловушка</h1><p class="muted">Экземпляр будет управляться существующей identity выбранного агента.</p></div>
+</header>
+<section class="panel form-panel compact-form-panel">
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+{% if hosts and profiles %}
+<form method="post" action="/traps/new" class="stacked-form configuration-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Имя экземпляра<input name="name" value="{{ form.get('name', '') }}" required minlength="3" maxlength="80"></label>
+  <label>Хост<select name="host_id" required>{% for host in hosts %}<option value="{{ host.id }}" {% if form.get('host_id') == host.id|string %}selected{% endif %}>{{ host.name }} — {{ host.management_address }}</option>{% endfor %}</select></label>
+  <label>Профиль<select name="profile_id" required>{% for profile in profiles %}<option value="{{ profile.id }}" {% if form.get('profile_id') == profile.id|string %}selected{% endif %}>{{ profile.name }} ({{ profile.interaction_level.value }}, v{{ profile.config_version }})</option>{% endfor %}</select></label>
+  <div class="form-actions"><a class="button secondary" href="/traps">Отмена</a><button class="button primary" type="submit">Создать</button></div>
+</form>
+{% else %}
+<div class="empty-state"><h3>Нужны хост и профиль</h3><p>Сначала зарегистрируйте хост и создайте хотя бы один профиль.</p></div>
+{% endif %}
+</section>
+{% endblock %}

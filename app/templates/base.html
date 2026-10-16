@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}СЫРНЫЕ ШАРИКИ{% endblock %}</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20261015.3">
+  <link rel="stylesheet" href="/static/stage2.css?v=20261015.3">
+  <link rel="stylesheet" href="/static/events-page.css?v=20261015.2">
+  {% block head %}{% endblock %}
+</head>
+<body data-page="{{ request.url.path }}">
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="/" aria-label="СЫРНЫЕ ШАРИКИ — обзор">
+        <img class="brand-image" src="/static/honeyforge-mark.jpg?v=20261011.13" width="72" height="72" alt="">
+        <span class="brand-copy"><strong>СЫРНЫЕ ШАРИКИ</strong><small>Центр управления</small></span>
+      </a>
+      <nav aria-label="Основная навигация">
+        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}" {% if request.url.path == '/' %}aria-current="page"{% endif %} title="Обзор">
+          <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5-7 5 14 2.5-7h4"/></svg>
+          <span>Обзор</span>
+        </a>
+        <a href="/infrastructure" class="{% if request.url.path.startswith('/infrastructure') %}active{% endif %}" {% if request.url.path.startswith('/infrastructure') %}aria-current="page"{% endif %} title="Карта инфраструктуры">
+          <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="m7 11 10-4M7 13l10 4"/></svg>
+          <span>Карта</span>
+        </a>
+        <a href="/analytics" class="{% if request.url.path.startswith('/analytics') %}active{% endif %}" {% if request.url.path.startswith('/analytics') %}aria-current="page"{% endif %} title="Аналитика источников">
+          <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/><path d="M2 19h20"/></svg>
+          <span>Аналитика</span>
+        </a>
+        <a href="/events" class="{% if request.url.path.startswith('/events') %}active{% endif %}" {% if request.url.path.startswith('/events') %}aria-current="page"{% endif %} title="События">
+          <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 17 6-5-6-5"/><path d="M12 19h8"/></svg>
+          <span>События</span>
+        </a>
+        <a href="/alerts" class="{% if request.url.path.startswith('/alerts') %}active{% endif %}" {% if request.url.path.startswith('/alerts') %}aria-current="page"{% endif %} title="Предупреждения">
+          <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2.8 19h18.4L12 3Z"/><path d="M12 9v4M12 16h.01"/></svg>
+          <span>Предупреждения</span>
+        </a>
+        {% if user.role.value == 'admin' %}
+        <a href="/honeytokens" class="{% if request.url.path.startswith('/honeytokens') %}active{% endif %}" {% if request.url.path.startswith('/honeytokens') %}aria-current="page"{% endif %} title="Honeytokens">
+          <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M15 4l5 5M17 6l-2 2"/></svg>
+          <span>Honeytokens</span>
+        </a>
+        {% endif %}
+        <a href="/profiles" class="{% if request.url.path.startswith('/profiles') %}active{% endif %}" {% if request.url.path.startswith('/profiles') %}aria-current="page"{% endif %} title="Профили">
+          <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h8M16 7h4M4 17h4M12 17h8"/><circle cx="14" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+          <span>Профили</span>
+        </a>
+        <a href="/hosts" class="{% if request.url.path == '/hosts' %}active{% endif %}" {% if request.url.path == '/hosts' %}aria-current="page"{% endif %} title="Хосты">
+          <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/></svg>
+          <span>Хосты</span>
+        </a>
+        <a href="/traps" class="{% if request.url.path == '/traps' %}active{% endif %}" {% if request.url.path == '/traps' %}aria-current="page"{% endif %} title="Ловушки">
+          <svg class="nav-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+          <span>Ловушки</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-user">
+          <span class="user-meta"><strong>{{ user.username }}</strong><small>{{ {'admin':'Администратор','operator':'Оператор','observer':'Наблюдатель'}[user.role.value] }}</small></span>
+          <form method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="icon-button" type="submit" title="Выйти" aria-label="Выйти">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10"/></svg>
+            </button>
+          </form>
+        </div>
+        <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-controls="sidebar" aria-expanded="true" title="Свернуть боковую панель">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+          <span>Свернуть</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <button class="quick-search-trigger" id="command-palette-trigger" type="button" aria-keyshortcuts="Control+K Meta+K">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+          <span>Быстрый поиск</span><kbd>Ctrl K</kbd>
+        </button>
+        <span class="stream-state" id="stream-status" hidden aria-live="polite"><span></span><strong>Поток событий</strong></span>
+      </header>
+      <main class="content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  <dialog class="command-palette" id="command-palette" aria-labelledby="command-palette-title">
+    <div class="command-head">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+      <label class="sr-only" for="command-query" id="command-palette-title">Быстрый поиск</label>
+      <input id="command-query" type="search" autocomplete="off" placeholder="Перейти к разделу…">
+      <kbd>Esc</kbd>
+    </div>
+    <div class="command-results" role="listbox" aria-label="Разделы">
+      <a href="/" data-command-item data-keywords="главная сводка мониторинг" role="option"><span>Обзор</span><small>/</small></a>
+      <a href="/infrastructure" data-command-item data-keywords="карта инфраструктура агенты связи topology" role="option"><span>Карта инфраструктуры</span><small>/infrastructure</small></a>
+      <a href="/analytics" data-command-item data-keywords="аналитика риск источники признаки статистика" role="option"><span>Аналитика источников</span><small>/analytics</small></a>
+      <a href="/events" data-command-item data-keywords="журнал телеметрия поиск siem" role="option"><span>События</span><small>/events</small></a>
+      <a href="/alerts" data-command-item data-keywords="предупреждения alerts срабатывания" role="option"><span>Предупреждения</span><small>/alerts</small></a>
+      {% if user.role.value == 'admin' %}<a href="/honeytokens" data-command-item data-keywords="honeytokens токены приманки" role="option"><span>Honeytokens</span><small>/honeytokens</small></a>{% endif %}
+      <a href="/profiles" data-command-item data-keywords="конфигурация сервисы" role="option"><span>Профили</span><small>/profiles</small></a>
+      <a href="/hosts" data-command-item data-keywords="агенты инфраструктура устройства" role="option"><span>Хосты</span><small>/hosts</small></a>
+      <a href="/traps" data-command-item data-keywords="ловушки honeypot экземпляры" role="option"><span>Ловушки</span><small>/traps</small></a>
+      <p class="command-empty" id="command-empty" hidden>Совпадений нет</p>
+    </div>
+    <div class="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> выбор</span><span><kbd>Enter</kbd> открыть</span></div>
+  </dialog>
+
+  <dialog class="shortcuts-dialog" id="shortcuts-dialog" aria-labelledby="shortcuts-title">
+    <div class="dialog-heading"><h2 id="shortcuts-title">Горячие клавиши</h2><button class="icon-button" type="button" data-dialog-close aria-label="Закрыть">×</button></div>
+    <dl class="shortcut-list">
+      <div><dt><kbd>Ctrl</kbd> <kbd>K</kbd></dt><dd>Быстрый поиск</dd></div>
+      <div><dt><kbd>/</kbd></dt><dd>Поиск по событиям</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Закрыть панель или окно</dd></div>
+      <div><dt><kbd>?</kbd></dt><dd>Показать эту справку</dd></div>
+    </dl>
+  </dialog>
+
+  <script src="/static/console.js?v=20261012.1" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

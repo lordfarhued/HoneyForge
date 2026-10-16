@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}События — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block section_name %}События{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div><h1>События</h1><p class="muted">Журнал активности, зафиксированной подключёнными ловушками.</p></div>
+  <div class="inline-actions">
+    <span class="event-count">Найдено: {{ total }}</span>
+    <a class="button secondary small" href="{{ export_json_url }}" data-export-format="json">Экспорт JSON</a>
+    <a class="button secondary small" href="{{ export_csv_url }}" data-export-format="csv">Экспорт CSV</a>
+  </div>
+</header>
+
+<form class="panel event-filters" id="event-filters" method="get" action="/events">
+  <div class="filter-panel-heading">
+    <div><h2>Фильтры</h2><p>Сузьте выборку по доступным полям телеметрии.</p></div>
+  </div>
+  <label>Тип события
+    <select name="event_type">
+      <option value="">Все типы</option>
+      {% for value in event_types %}<option value="{{ value }}" {% if filters.event_type == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Ловушка
+    <select name="instance_id">
+      <option value="">Все ловушки</option>
+      {% for trap_id, trap_name in traps %}<option value="{{ trap_id }}" {% if filters.instance_id == trap_id|string %}selected{% endif %}>{{ trap_name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>IP-адрес<input class="mono" name="source_ip" value="{{ filters.source_ip }}" placeholder="192.0.2.10"></label>
+  <label>С<input type="datetime-local" step="1" name="from_time" value="{{ filters.from_time }}"></label>
+  <label>По<input type="datetime-local" step="1" name="to_time" value="{{ filters.to_time }}"></label>
+  <label>На странице
+    <select name="page_size">
+      {% for size in (10, 25, 50, 100) %}<option value="{{ size }}" {% if page_size == size %}selected{% endif %}>{{ size }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="event-search">Поиск в данных события<input name="q" value="{{ filters.q }}" maxlength="200" placeholder="HTTP URL, SSH-команда…"></label>
+  <div class="filter-actions"><button class="button primary" type="submit">Применить</button><a class="button secondary" href="/events">Сбросить</a></div>
+</form>
+
+<section class="panel data-panel" id="attack-correlation" aria-labelledby="attack-correlation-title">
+  <div class="filter-panel-heading">
+    <div>
+      <h2 id="attack-correlation-title">Корреляция атак · Timeline</h2>
+      <p>Эпизоды объединяют события одного наблюдаемого IP в фиксированном окне 15 минут.</p>
+    </div>
+  </div>
+  <p class="muted">IP — наблюдаемый сетевой адрес, а не подтверждённая личность: VPN, NAT и прокси могут объединять разных клиентов.</p>
+  {% if attack_timelines %}
+    {% for timeline in attack_timelines %}
+    <details class="correlation-group" data-source-ip="{{ timeline.source_ip }}" data-event-count="{{ timeline.event_count }}" {% if loop.first %}open{% endif %}>
+      <summary>
+        <strong class="mono">Наблюдаемый источник {{ timeline.source_ip }}</strong>
+        <span>{{ timeline.started_at|moscow_time }} — {{ timeline.ended_at|moscow_time }} · событий: {{ timeline.event_count }}</span>
+      </summary>
+      <div class="inline-actions">
+        {% for signal in timeline.signals %}<span class="status-pill status-pending" data-signal="{{ signal.code }}">{{ signal.label }}</span>{% endfor %}
+        {% if not timeline.signals %}<span class="muted">Явные признаки не сработали</span>{% endif %}
+      </div>
+      <div class="timeline-columns" aria-hidden="true">
+        <span>Дата</span><span>Время</span><span>Тип</span><span>Действие</span><span>Детали</span><span></span>
+      </div>
+      <ol class="attack-timeline">
+        {% for item in timeline.events %}
+        {% set timeline_family = item.event_type|lower %}
+        {% set timeline_timestamp = (item.occurred_at|moscow_time).split(' ') %}
+        <li data-timeline-event-id="{{ item.external_id }}" data-event-type="{{ item.event_type }}">
+          <time class="timeline-date event-time" datetime="{{ item.occurred_at.isoformat() }}">{{ timeline_timestamp[0] }}</time>
+          <time class="timeline-clock event-time" datetime="{{ item.occurred_at.isoformat() }}">{{ timeline_timestamp[1] }} <small>{{ timeline_timestamp[2] }}</small></time>
+          <span class="timeline-protocol event-type {% if 'http' in timeline_family %}event-type-http{% elif 'ssh' in timeline_family %}event-type-ssh{% endif %}">{% if 'http' in timeline_family %}HTTP{% elif 'ssh' in timeline_family %}SSH{% else %}Прочее{% endif %}</span>
+          <span class="timeline-action">{{ item.label }}</span>
+          <span class="timeline-summary" title="{{ item.summary }}">{{ item.summary }}</span>
+          <a class="button secondary small timeline-link" href="{{ events_url(target_page=page, selected_id=item.id) }}">Открыть</a>
+        </li>
+        {% endfor %}
+      </ol>
+    </details>
+    {% endfor %}
+    <p class="muted">Timeline построен по реально записанным событиям текущей страницы.</p>
+  {% else %}
+    <div class="empty-state compact"><h3>Нет данных для корреляции</h3><p>Нужны события с наблюдаемым IP-адресом.</p></div>
+  {% endif %}
+</section>
+
+<section class="panel data-panel events-table-panel">
+  {% if events %}
+  <div class="table-wrap"><table class="events-table sticky-last-column">
+    <thead><tr><th>Время</th><th>Тип</th><th>Ловушка</th><th>Источник</th><th>Данные</th><th><span class="sr-only">Действия</span></th></tr></thead>
+    <tbody>
+    {% for row in events %}
+      {% set event_family = row.event.event_type|lower %}
+      <tr class="event-table-row {% if selected_event and selected_event.id == row.event.id %}selected{% endif %}" tabindex="0" data-detail-url="{{ events_url(target_page=page, selected_id=row.event.id) }}">
+        <td class="event-time">{{ row.event.occurred_at|moscow_time }}</td>
+        <td><span class="event-type {% if 'http' in event_family %}event-type-http{% elif 'ssh' in event_family %}event-type-ssh{% elif 'udp' in event_family %}event-type-udp{% elif 'tcp' in event_family %}event-type-tcp{% endif %}">{{ row.event.event_type }}</span>{% if row.event.is_test %}<span class="level level-medium">ТЕСТ</span>{% endif %}</td>
+        <td><strong>{{ row.trap_name }}</strong></td>
+        <td class="mono">{{ row.event.source_ip or '—' }}</td>
+        <td class="event-summary" title="{{ row.summary }}">{{ row.summary }}</td>
+        <td><a class="button secondary small" data-event-detail-link href="{{ events_url(target_page=page, selected_id=row.event.id) }}">Открыть</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+    <div class="empty-state compact"><h3>Подозрительно тихо</h3><p>Измените фильтры или дождитесь новых данных от ловушек.</p></div>
+  {% endif %}
+
+  <nav class="pagination" aria-label="Пагинация событий">
+    {% if page > 1 %}<a class="button secondary small" href="{{ events_url(target_page=page-1) }}">← Назад</a>{% endif %}
+    <span>Страница {{ page }} из {{ total_pages }}</span>
+    {% if page < total_pages %}<a class="button secondary small" href="{{ events_url(target_page=page+1) }}">Вперёд →</a>{% endif %}
+  </nav>
+</section>
+
+{% if selected_event %}
+<div class="drawer-backdrop" data-drawer-close data-close-url="{{ events_url(target_page=page) }}"></div>
+<aside class="event-drawer{% if selected_event.is_test %} event-detail-test{% endif %}" id="event-detail" role="dialog" aria-modal="true" aria-labelledby="event-detail-title" tabindex="-1" data-close-url="{{ events_url(target_page=page) }}">
+  <div class="drawer-heading"><div><span class="drawer-kicker">Событие{% if selected_event.is_test %} · тестовое{% endif %}</span><h2 id="event-detail-title">{{ selected_event.event_type }}</h2></div><a class="icon-button" href="{{ events_url(target_page=page) }}" aria-label="Закрыть">×</a></div>
+  <dl class="event-metadata">
+    <div><dt>Время события</dt><dd class="mono">{{ selected_event.occurred_at|moscow_time }}</dd></div>
+    <div><dt>Получено центром</dt><dd class="mono">{{ selected_event.created_at|moscow_time }}</dd></div>
+    <div><dt>Ловушка</dt><dd>{{ selected_trap_name }}</dd></div>
+    <div><dt>Источник</dt><dd class="mono">{{ selected_event.source_ip or '—' }}</dd></div>
+    <div><dt>Event ID</dt><dd><code id="event-external-id">{{ selected_event.external_id }}</code><button class="copy-button" type="button" data-copy-target="#event-external-id">Копировать</button></dd></div>
+    <div><dt>Тестовое</dt><dd>{{ 'Да' if selected_event.is_test else 'Нет' }}</dd></div>
+  </dl>
+  <div class="event-json-heading"><h3>Исходный JSON</h3><div class="inline-actions">{% if data_is_redacted %}<span class="status-pill status-pending">чувствительные поля скрыты</span>{% endif %}<button class="copy-button" type="button" data-copy-target="#event-json-data">Копировать JSON</button></div></div>
+  <pre class="event-json"><code id="event-json-data">{{ selected_json }}</code></pre>
+</aside>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/event-filters.js?v=20261011.13" defer></script>{% endblock %}

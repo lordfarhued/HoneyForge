@@ -1,0 +1,455 @@
+# Keep the legacy default so an in-place upgrade reuses the existing
+# project-scoped volumes. Fresh installs set RUNTIME_PROJECT_NAME explicitly.
+name: ${RUNTIME_PROJECT_NAME:-${HF_AGENT_PROJECT_NAME:-honeyforge-ubuntu-agent}}
+
+x-agent-environment: &agent-environment
+  RUNTIME_CONTROL_ORIGIN: https://${CONTROL_TLS_NAME:-${AGENT_SERVER_NAME:-agent-gateway}}:${CONTROL_PORT:-${AGENT_GATEWAY_PORT:-8443}}
+  RUNTIME_TLS_SERVER_NAME: ${CONTROL_TLS_NAME:-${AGENT_SERVER_NAME:-agent-gateway}}
+  RUNTIME_CA_FILE: /run/runtime-trust/ca.crt
+  RUNTIME_PIN_FILE: /run/runtime-trust/server.pin
+  RUNTIME_TRANSPORT_PREFIX: ${TRANSPORT_PREFIX:-${AGENT_CLIENT_TRANSPORT_PREFIX:-/assets/runtime}}
+  RUNTIME_BOOTSTRAP_FILE: /run/runtime-bootstrap/enrollment.token
+  RUNTIME_STATE_DIR: /var/lib/system-metrics
+  RUNTIME_LOW_CONFIG_FILE: /run/runtime-control/low/config.json
+  RUNTIME_MEDIUM_CONFIG_FILE: /run/runtime-control/medium/config.json
+  RUNTIME_HIGH_CONFIG_FILE: /run/runtime-control/high/config.json
+  RUNTIME_LOW_EVENT_DIR: /run/runtime-events/low
+  RUNTIME_MEDIUM_EVENT_DIR: /run/runtime-events/medium
+  RUNTIME_HIGH_EVENT_DIR: /run/runtime-events/high
+  RUNTIME_HEARTBEAT_SECONDS: ${RUNTIME_HEARTBEAT_SECONDS:-${AGENT_HEARTBEAT_SECONDS:-15}}
+  RUNTIME_HEARTBEAT_JITTER_RATIO: ${RUNTIME_HEARTBEAT_JITTER_RATIO:-${AGENT_HEARTBEAT_JITTER_RATIO:-0.15}}
+  RUNTIME_KEEPALIVE_SECONDS: ${RUNTIME_KEEPALIVE_SECONDS:-${AGENT_KEEPALIVE_SECONDS:-60}}
+  RUNTIME_QUEUE_MAX_EVENTS: ${RUNTIME_QUEUE_MAX_EVENTS:-10000}
+  RUNTIME_PROCESS_NAME: ${RUNTIME_PROCESS_NAME:-system-metrics}
+  RUNTIME_INSTALL_PATH: ${RUNTIME_INSTALL_PATH:-/opt/system-metrics}
+  RUNTIME_SYNTHETIC_INTERVAL: "0"
+
+x-runtime-logging: &runtime-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  runtime-bootstrap:
+    profiles: ["bootstrap"]
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      args:
+        RUNTIME_INSTALL_PATH: ${RUNTIME_INSTALL_PATH:-/opt/system-metrics}
+    command: ["/usr/local/bin/system-metrics-bootstrap"]
+    environment: *agent-environment
+    stdin_open: true
+    tty: true
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    volumes:
+      - ubuntu_agent_state:/var/lib/system-metrics:ro
+      - ubuntu_agent_bootstrap:/run/runtime-bootstrap
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+    logging: *runtime-logging
+
+  runtime-worker:
+    container_name: ${RUNTIME_CONTAINER_NAME:-system-metrics}
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      args:
+        RUNTIME_INSTALL_PATH: ${RUNTIME_INSTALL_PATH:-/opt/system-metrics}
+    restart: unless-stopped
+    environment: *agent-environment
+    extra_hosts:
+      - "${CONTROL_TLS_NAME:-${AGENT_SERVER_NAME:-agent-gateway}}=${CONTROL_ENDPOINT_IP:-${HONEYFORGE_CENTER_IP:-127.0.0.1}}"
+    volumes:
+      - ubuntu_agent_state:/var/lib/system-metrics
+      - ubuntu_agent_bootstrap:/run/runtime-bootstrap
+      - ./secrets/pki-public:/run/runtime-trust:ro
+      - ubuntu_low_control:/run/runtime-control/low
+      - ubuntu_medium_control:/run/runtime-control/medium
+      - ubuntu_high_control:/run/runtime-control/high
+      - ubuntu_low_events:/run/runtime-events/low
+      - ubuntu_medium_events:/run/runtime-events/medium
+      - ubuntu_high_events:/run/runtime-events/high
+    depends_on:
+      low-honeypot:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys,time; p=Path('/var/lib/system-metrics/last_success'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 90 else 1)"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    networks: [agent_egress]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.50
+    logging: *runtime-logging
+
+  low-honeypot:
+    build:
+      context: .
+      dockerfile: Dockerfile.honeypot
+    command: ["python", "-m", "honeypots.low"]
+    restart: unless-stopped
+    environment:
+      HF_PROXY_PROTOCOL: "1"
+      HF_EVENT_SPOOL_MAX_FILES: ${EVENT_SPOOL_MAX_FILES:-20000}
+      HF_EVENT_SPOOL_MAX_BYTES: ${EVENT_SPOOL_MAX_BYTES:-268435456}
+    volumes:
+      - ubuntu_low_control:/run/honeyforge-config:ro
+      - ubuntu_low_events:/var/lib/honeyforge-events
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.50
+    logging: *runtime-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys,time; p=Path('/tmp/honeyforge-engine-alive'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 10 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    networks: [low_ingress]
+
+  medium-honeypot:
+    profiles: ["medium"]
+    build:
+      context: .
+      dockerfile: Dockerfile.honeypot
+    command: ["python", "-m", "honeypots.medium"]
+    restart: unless-stopped
+    environment:
+      HF_PROXY_PROTOCOL: "1"
+      HF_EVENT_SPOOL_MAX_FILES: ${EVENT_SPOOL_MAX_FILES:-20000}
+      HF_EVENT_SPOOL_MAX_BYTES: ${EVENT_SPOOL_MAX_BYTES:-268435456}
+    volumes:
+      - ubuntu_medium_control:/run/honeyforge-config:ro
+      - ubuntu_medium_events:/var/lib/honeyforge-events
+      - ubuntu_medium_state:/var/lib/honeyforge-medium
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.50
+    logging: *runtime-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys,time; p=Path('/tmp/honeyforge-engine-alive'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 10 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    networks: [medium_ingress]
+
+  high-honeypot:
+    profiles: ["high"]
+    build:
+      context: .
+      dockerfile: Dockerfile.honeypot
+    command: ["python", "-m", "honeypots.high"]
+    restart: unless-stopped
+    environment:
+      HF_PROXY_PROTOCOL: "1"
+      HF_EVENT_SPOOL_MAX_FILES: ${EVENT_SPOOL_MAX_FILES:-20000}
+      HF_EVENT_SPOOL_MAX_BYTES: ${EVENT_SPOOL_MAX_BYTES:-268435456}
+    volumes:
+      - ubuntu_high_control:/run/honeyforge-config:ro
+      - ubuntu_high_events:/var/lib/honeyforge-events
+      - ubuntu_high_state:/var/lib/honeyforge-high
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.00
+    logging: *runtime-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys,time; p=Path('/tmp/honeyforge-engine-alive'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 10 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    networks: [high_ingress]
+
+  low-ingress:
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_LISTEN_PORT: "8081"
+      HF_RELAY_TARGET_HOST: low-honeypot
+      HF_RELAY_TARGET_PORT: "8081"
+    ports:
+      - "${LOW_BIND_IP:-127.0.0.1}:${LOW_HTTP_PORT:-8081}:8081"
+    depends_on:
+      low-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    logging: *runtime-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks: [low_ingress, public_ingress]
+
+  low-udp-ingress:
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_PROTOCOL: udp
+      HF_RELAY_LISTEN_PORT: "8083"
+      HF_RELAY_TARGET_HOST: low-honeypot
+      HF_RELAY_TARGET_PORT: ${LOW_UDP_PORT:-8083}
+    ports:
+      - "${LOW_BIND_IP:-127.0.0.1}:${LOW_UDP_PORT:-8083}:8083/udp"
+    depends_on:
+      low-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    logging: *runtime-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks: [low_ingress, public_ingress]
+
+  medium-http-ingress:
+    profiles: ["medium"]
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_LISTEN_PORT: "8082"
+      HF_RELAY_TARGET_HOST: medium-honeypot
+      HF_RELAY_TARGET_PORT: "8082"
+    ports:
+      - "${TRAP_BIND_IP:-127.0.0.1}:${MEDIUM_HTTP_PORT:-8082}:8082"
+    depends_on:
+      medium-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    logging: *runtime-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks: [medium_ingress, public_ingress]
+
+  medium-ssh-ingress:
+    profiles: ["medium"]
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_LISTEN_PORT: "2222"
+      HF_RELAY_TARGET_HOST: medium-honeypot
+      HF_RELAY_TARGET_PORT: "2222"
+    ports:
+      - "${TRAP_BIND_IP:-127.0.0.1}:${MEDIUM_SSH_PORT:-2222}:2222"
+    depends_on:
+      medium-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    logging: *runtime-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks: [medium_ingress, public_ingress]
+
+  high-http-ingress:
+    profiles: ["high"]
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_LISTEN_PORT: "8084"
+      HF_RELAY_TARGET_HOST: high-honeypot
+      HF_RELAY_TARGET_PORT: "8084"
+    ports:
+      - "${TRAP_BIND_IP:-127.0.0.1}:${HIGH_HTTP_PORT:-8084}:8084"
+    depends_on:
+      high-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    logging: *runtime-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks: [high_ingress, public_ingress]
+
+  high-ssh-ingress:
+    profiles: ["high"]
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_LISTEN_PORT: "2223"
+      HF_RELAY_TARGET_HOST: high-honeypot
+      HF_RELAY_TARGET_PORT: "2223"
+    ports:
+      - "${TRAP_BIND_IP:-127.0.0.1}:${HIGH_SSH_PORT:-2223}:2223"
+    depends_on:
+      high-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=${RUNTIME_APPARMOR_PROFILE:-docker-default}
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    logging: *runtime-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks: [high_ingress, public_ingress]
+
+volumes:
+  ubuntu_agent_state:
+  ubuntu_agent_bootstrap:
+  ubuntu_low_control:
+  ubuntu_medium_control:
+  ubuntu_high_control:
+  ubuntu_low_events:
+  ubuntu_medium_events:
+  ubuntu_high_events:
+  ubuntu_medium_state:
+  ubuntu_high_state:
+
+networks:
+  agent_egress:
+    name: ${AGENT_EGRESS_NETWORK_NAME:-system-metrics-agent}
+    driver: bridge
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: ${AGENT_EGRESS_BRIDGE_NAME:-np-agent}
+      com.docker.network.bridge.enable_icc: "false"
+  low_ingress:
+    name: ${LOW_INGRESS_NETWORK_NAME:-system-metrics-low}
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: ${LOW_INGRESS_BRIDGE_NAME:-np-low}
+  medium_ingress:
+    name: ${MEDIUM_INGRESS_NETWORK_NAME:-system-metrics-medium}
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: ${MEDIUM_INGRESS_BRIDGE_NAME:-np-medium}
+  high_ingress:
+    name: ${HIGH_INGRESS_NETWORK_NAME:-system-metrics-high}
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: ${HIGH_INGRESS_BRIDGE_NAME:-np-high}
+  public_ingress:
+    name: ${PUBLIC_INGRESS_NETWORK_NAME:-system-metrics-public}
+    driver: bridge
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: ${PUBLIC_INGRESS_BRIDGE_NAME:-np-public}
+      com.docker.network.bridge.enable_icc: "false"

@@ -1,0 +1,6 @@
+[Unit]
+Description=Rollback temporary public relay egress restrictions
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl stop system-metrics-egress.service

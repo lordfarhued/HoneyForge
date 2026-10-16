@@ -1,0 +1,10 @@
+FROM python:3.12.15-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /relay
+COPY honeypots/__init__.py honeypots/relay.py ./honeypots/
+RUN addgroup --system honeyforge-relay \
+    && adduser --system --ingroup honeyforge-relay --home /nonexistent --no-create-home honeyforge-relay \
+    && chown -R honeyforge-relay:honeyforge-relay /relay
+USER honeyforge-relay
+CMD ["python", "-m", "honeypots.relay"]

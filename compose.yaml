@@ -1,0 +1,560 @@
+name: honeyforge
+
+services:
+  pki-init:
+    build:
+      context: .
+    entrypoint: ["python", "-m", "scripts.init_pki"]
+    command: []
+    environment:
+      PKI_DIR: /pki
+      PKI_PUBLIC_DIR: /pki-public
+      AGENT_BOOTSTRAP_DIR: /agent-bootstrap
+      PKI_SERVER_NAME: ${PKI_SERVER_NAME:-agent-gateway}
+      PKI_CA_COMMON_NAME: ${PKI_CA_COMMON_NAME:-Local Service CA}
+    volumes:
+      - ./secrets/pki:/pki
+      - ./secrets/pki-public:/pki-public
+      - ./secrets/agent:/agent-bootstrap
+    restart: "no"
+
+  db:
+    image: postgres:17.11-alpine3.24
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-honeyforge}
+      POSTGRES_USER: ${POSTGRES_USER:-honeyforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - data
+
+  api:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-honeyforge}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-honeyforge}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ENVIRONMENT: local
+      CA_CERT_PATH: /run/honeyforge-pki/ca.crt
+      CA_KEY_PATH: /run/honeyforge-pki/ca.key
+      AGENT_GATEWAY_PEER_NAME: agent-gateway
+    depends_on:
+      pki-init:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    volumes:
+      - ./secrets/pki/ca.crt:/run/honeyforge-pki/ca.crt:ro
+      - ./secrets/pki/ca.key:/run/honeyforge-pki/ca.key:ro
+      - ./secrets/agent:/run/honeyforge-bootstrap
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks:
+      - edge
+      - data
+      - agent_backend
+
+  nginx:
+    image: nginx:1.30.5-alpine3.24
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      - edge
+
+  agent-gateway:
+    image: nginx:1.30.5-alpine3.24
+    restart: unless-stopped
+    environment:
+      AGENT_TRANSPORT_PREFIX: ${AGENT_TRANSPORT_PREFIX:-/assets/runtime}
+      AGENT_TLS_SERVER_NAME: ${PKI_SERVER_NAME:-agent-gateway}
+    ports:
+      - "${AGENT_BIND_IP:-127.0.0.1}:${AGENT_PORT:-8443}:8443"
+    volumes:
+      - ./docker/agent-gateway.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./secrets/pki/server.crt:/etc/nginx/pki/server.crt:ro
+      - ./secrets/pki/server.key:/etc/nginx/pki/server.key:ro
+      - ./secrets/pki/ca.crt:/etc/nginx/pki/ca.crt:ro
+    depends_on:
+      pki-init:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/internal-health"]
+      interval: 10s
+      timeout: 4s
+      retries: 8
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m
+      - /var/run:rw,noexec,nosuid,size=1m
+      - /tmp:rw,noexec,nosuid,size=8m
+      - /etc/nginx/conf.d:rw,noexec,nosuid,size=1m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    networks:
+      - agent_ingress
+      - agent_backend
+      - agent_channel
+
+  local-agent:
+    profiles: ["local-agent"]
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      args:
+        RUNTIME_INSTALL_PATH: ${RUNTIME_INSTALL_PATH:-/opt/system-metrics}
+    restart: unless-stopped
+    environment:
+      RUNTIME_CONTROL_ORIGIN: https://agent-gateway:8443
+      RUNTIME_TLS_SERVER_NAME: agent-gateway
+      RUNTIME_CA_FILE: /run/runtime-trust/ca.crt
+      RUNTIME_PIN_FILE: /run/runtime-trust/server.pin
+      RUNTIME_TRANSPORT_PREFIX: ${AGENT_CLIENT_TRANSPORT_PREFIX:-/assets/runtime}
+      RUNTIME_BOOTSTRAP_FILE: /run/runtime-bootstrap/enrollment.token
+      RUNTIME_STATE_DIR: /var/lib/system-metrics
+      RUNTIME_LOW_CONFIG_FILE: /run/runtime-control/low/config.json
+      RUNTIME_MEDIUM_CONFIG_FILE: /run/runtime-control/medium/config.json
+      RUNTIME_HIGH_CONFIG_FILE: /run/runtime-control/high/config.json
+      RUNTIME_LOW_EVENT_DIR: /run/runtime-events/low
+      RUNTIME_MEDIUM_EVENT_DIR: /run/runtime-events/medium
+      RUNTIME_HIGH_EVENT_DIR: /run/runtime-events/high
+      RUNTIME_HEARTBEAT_SECONDS: ${AGENT_HEARTBEAT_SECONDS:-15}
+      RUNTIME_HEARTBEAT_JITTER_RATIO: ${AGENT_HEARTBEAT_JITTER_RATIO:-0.15}
+      RUNTIME_KEEPALIVE_SECONDS: ${AGENT_KEEPALIVE_SECONDS:-60}
+      RUNTIME_PROCESS_NAME: ${RUNTIME_PROCESS_NAME:-system-metrics}
+      RUNTIME_INSTALL_PATH: ${RUNTIME_INSTALL_PATH:-/opt/system-metrics}
+      RUNTIME_SYNTHETIC_INTERVAL: ${AGENT_SYNTHETIC_INTERVAL:-0}
+    volumes:
+      - agent_state:/var/lib/system-metrics
+      - ./secrets/pki-public:/run/runtime-trust:ro
+      - ./secrets/agent:/run/runtime-bootstrap
+      - low_control:/run/runtime-control/low
+      - medium_control:/run/runtime-control/medium
+      - high_control:/run/runtime-control/high
+      - low_events:/run/runtime-events/low
+      - medium_events:/run/runtime-events/medium
+      - high_events:/run/runtime-events/high
+    depends_on:
+      agent-gateway:
+        condition: service_healthy
+      low-honeypot:
+        condition: service_healthy
+      medium-honeypot:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys,time; p=Path('/var/lib/system-metrics/last_success'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 90 else 1)"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    networks:
+      - agent_channel
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  low-honeypot:
+    profiles: ["local-agent"]
+    build:
+      context: .
+      dockerfile: Dockerfile.honeypot
+    command: ["python", "-m", "honeypots.low"]
+    restart: unless-stopped
+    environment:
+      HF_PROXY_PROTOCOL: "1"
+    volumes:
+      - low_control:/run/honeyforge-config:ro
+      - low_events:/var/lib/honeyforge-events
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.50
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys,time; p=Path('/tmp/honeyforge-engine-alive'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 10 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    networks:
+      - low_ingress
+
+  medium-honeypot:
+    profiles: ["local-agent"]
+    build:
+      context: .
+      dockerfile: Dockerfile.honeypot
+    command: ["python", "-m", "honeypots.medium"]
+    restart: unless-stopped
+    environment:
+      HF_PROXY_PROTOCOL: "1"
+    volumes:
+      - medium_control:/run/honeyforge-config:ro
+      - medium_events:/var/lib/honeyforge-events
+      - medium_state:/var/lib/honeyforge-medium
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.50
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys,time; p=Path('/tmp/honeyforge-engine-alive'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 10 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    networks:
+      - medium_ingress
+
+  high-honeypot:
+    profiles: ["high"]
+    build:
+      context: .
+      dockerfile: Dockerfile.honeypot
+    command: ["python", "-m", "honeypots.high"]
+    restart: unless-stopped
+    environment:
+      HF_PROXY_PROTOCOL: "1"
+    volumes:
+      - high_control:/run/honeyforge-config:ro
+      - high_events:/var/lib/honeyforge-events
+      - high_state:/var/lib/honeyforge-high
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.00
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys,time; p=Path('/tmp/honeyforge-engine-alive'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 10 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    networks:
+      - high_ingress
+
+  low-ingress:
+    profiles: ["local-agent"]
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_LISTEN_PORT: "8081"
+      HF_RELAY_TARGET_HOST: low-honeypot
+      HF_RELAY_TARGET_PORT: "8081"
+    ports:
+      - "${LOW_BIND_IP:-127.0.0.1}:${LOW_HTTP_PORT:-8081}:8081"
+    depends_on:
+      low-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      - low_ingress
+      - public_ingress
+
+  low-udp-ingress:
+    profiles: ["local-agent"]
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_PROTOCOL: udp
+      HF_RELAY_LISTEN_PORT: "8083"
+      HF_RELAY_TARGET_HOST: low-honeypot
+      HF_RELAY_TARGET_PORT: ${LOW_UDP_PORT:-8083}
+    ports:
+      - "${LOW_BIND_IP:-127.0.0.1}:${LOW_UDP_PORT:-8083}:8083/udp"
+    depends_on:
+      low-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      - low_ingress
+      - public_ingress
+
+  medium-http-ingress:
+    profiles: ["local-agent"]
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_LISTEN_PORT: "8082"
+      HF_RELAY_TARGET_HOST: medium-honeypot
+      HF_RELAY_TARGET_PORT: "8082"
+    ports:
+      - "${TRAP_BIND_IP:-127.0.0.1}:${MEDIUM_HTTP_PORT:-8082}:8082"
+    depends_on:
+      medium-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      - medium_ingress
+      - public_ingress
+
+  medium-ssh-ingress:
+    profiles: ["local-agent"]
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_LISTEN_PORT: "2222"
+      HF_RELAY_TARGET_HOST: medium-honeypot
+      HF_RELAY_TARGET_PORT: "2222"
+    ports:
+      - "${TRAP_BIND_IP:-127.0.0.1}:${MEDIUM_SSH_PORT:-2222}:2222"
+    depends_on:
+      medium-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      - medium_ingress
+      - public_ingress
+
+  high-http-ingress:
+    profiles: ["high"]
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_LISTEN_PORT: "8084"
+      HF_RELAY_TARGET_HOST: high-honeypot
+      HF_RELAY_TARGET_PORT: "8084"
+    ports:
+      - "${TRAP_BIND_IP:-127.0.0.1}:${HIGH_HTTP_PORT:-8084}:8084"
+    depends_on:
+      high-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      - high_ingress
+      - public_ingress
+
+  high-ssh-ingress:
+    profiles: ["high"]
+    build:
+      context: .
+      dockerfile: Dockerfile.relay
+    command: ["python", "-m", "honeypots.relay"]
+    restart: unless-stopped
+    environment:
+      HF_RELAY_LISTEN_PORT: "2223"
+      HF_RELAY_TARGET_HOST: high-honeypot
+      HF_RELAY_TARGET_PORT: "2223"
+    ports:
+      - "${TRAP_BIND_IP:-127.0.0.1}:${HIGH_SSH_PORT:-2223}:2223"
+    depends_on:
+      high-honeypot:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      - high_ingress
+      - public_ingress
+
+  test-db:
+    profiles: ["test"]
+    image: postgres:17.11-alpine3.24
+    environment:
+      POSTGRES_DB: honeyforge_test
+      POSTGRES_USER: honeyforge_test
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honeyforge_test -d honeyforge_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - test_data
+
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    environment:
+      DATABASE_URL: postgresql+psycopg://honeyforge_test:${POSTGRES_PASSWORD}@test-db:5432/honeyforge_test
+      TEST_DATABASE_URL: postgresql+psycopg://honeyforge_test:${POSTGRES_PASSWORD}@test-db:5432/honeyforge_test
+      TEST_DATABASE_CONFIRMATION: honeyforge_test
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      ENVIRONMENT: test
+    depends_on:
+      test-db:
+        condition: service_healthy
+    networks:
+      - test_data
+
+volumes:
+  postgres_data:
+  agent_state:
+  low_control:
+  medium_control:
+  high_control:
+  low_events:
+  medium_events:
+  high_events:
+  medium_state:
+  high_state:
+  postgres_test_data:
+
+networks:
+  edge:
+  agent_ingress:
+  agent_backend:
+    internal: true
+  data:
+    internal: true
+  agent_channel:
+    internal: true
+  low_ingress:
+    internal: true
+  medium_ingress:
+    internal: true
+  high_ingress:
+    internal: true
+  public_ingress:
+  test_data:
+    internal: true

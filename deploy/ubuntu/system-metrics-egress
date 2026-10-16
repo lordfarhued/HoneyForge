@@ -1,0 +1,174 @@
+#!/bin/sh
+set -eu
+
+FORWARD_CHAIN="SME_FWD"
+INPUT_CHAIN="SME_INPUT"
+NETWORK_NAME="${PUBLIC_INGRESS_NETWORK_NAME:-system-metrics-public}"
+BRIDGE_NAME="${PUBLIC_INGRESS_BRIDGE_NAME:-np-public}"
+LOW_NETWORK_NAME="${LOW_INGRESS_NETWORK_NAME:-system-metrics-low}"
+LOW_BRIDGE_NAME="${LOW_INGRESS_BRIDGE_NAME:-np-low}"
+MEDIUM_NETWORK_NAME="${MEDIUM_INGRESS_NETWORK_NAME:-system-metrics-medium}"
+MEDIUM_BRIDGE_NAME="${MEDIUM_INGRESS_BRIDGE_NAME:-np-medium}"
+HIGH_NETWORK_NAME="${HIGH_INGRESS_NETWORK_NAME:-system-metrics-high}"
+HIGH_BRIDGE_NAME="${HIGH_INGRESS_BRIDGE_NAME:-np-high}"
+AGENT_NETWORK_NAME="${AGENT_EGRESS_NETWORK_NAME:-system-metrics-agent}"
+AGENT_BRIDGE_NAME="${AGENT_EGRESS_BRIDGE_NAME:-np-agent}"
+PROJECT_NAME="${RUNTIME_PROJECT_NAME:-system-metrics}"
+CONTROL_IP="${CONTROL_ENDPOINT_IP:-}"
+CONTROL_PORT="${CONTROL_PORT:-8443}"
+
+fail() {
+    printf '%s\n' "$*" >&2
+    exit 1
+}
+
+validate_name() {
+    case "$1" in
+        ""|*[!A-Za-z0-9_.:-]*) fail "Invalid network or bridge name" ;;
+    esac
+}
+
+validate_bridge_name() {
+    validate_name "$1"
+    case "$1" in *:*) fail "Invalid bridge name" ;; esac
+    [ "${#1}" -le 15 ] || fail "Bridge name exceeds the Linux interface limit"
+}
+
+validate_ipv4() {
+    case "$1" in
+        ""|*[!0-9.]*) fail "CONTROL_ENDPOINT_IP must be an explicit IPv4 address" ;;
+    esac
+    old_ifs=$IFS
+    IFS=.
+    set -- $1
+    IFS=$old_ifs
+    [ "$#" -eq 4 ] || fail "CONTROL_ENDPOINT_IP must be an explicit IPv4 address"
+    for octet in "$@"; do
+        [ -n "$octet" ] && [ "$octet" -ge 0 ] 2>/dev/null && [ "$octet" -le 255 ] \
+            || fail "CONTROL_ENDPOINT_IP must be an explicit IPv4 address"
+    done
+}
+
+validate_port() {
+    case "$1" in
+        ""|*[!0-9]*) fail "CONTROL_PORT must be numeric" ;;
+    esac
+    [ "$1" -ge 1 ] && [ "$1" -le 65535 ] || fail "CONTROL_PORT is outside 1..65535"
+}
+
+require_commands() {
+    for command_name in docker ip iptables ip6tables; do
+        command -v "$command_name" >/dev/null 2>&1 || fail "Required command is unavailable: $command_name"
+    done
+}
+
+validate_network() {
+    network_name=$1
+    bridge_name=$2
+    expected_internal=$3
+    logical_name=$4
+    validate_name "$network_name"
+    validate_bridge_name "$bridge_name"
+    driver=$(docker network inspect --format '{{.Driver}}' "$network_name" 2>/dev/null) || fail "Required network is unavailable"
+    internal=$(docker network inspect --format '{{.Internal}}' "$network_name" 2>/dev/null) || fail "Cannot inspect required network"
+    configured_bridge=$(docker network inspect --format '{{index .Options "com.docker.network.bridge.name"}}' "$network_name" 2>/dev/null) || fail "Cannot inspect required bridge"
+    compose_project=$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' "$network_name" 2>/dev/null) || fail "Cannot inspect network project label"
+    compose_network=$(docker network inspect --format '{{index .Labels "com.docker.compose.network"}}' "$network_name" 2>/dev/null) || fail "Cannot inspect network role label"
+    [ "$driver" = "bridge" ] || fail "Ingress network does not use the bridge driver"
+    [ "$internal" = "$expected_internal" ] || fail "Ingress network has an unexpected internal flag"
+    [ "$configured_bridge" = "$bridge_name" ] || fail "Ingress bridge does not match the configured name"
+    [ "$compose_project" = "$PROJECT_NAME" ] || fail "Network belongs to an unexpected Compose project"
+    [ "$compose_network" = "$logical_name" ] || fail "Network has an unexpected Compose role"
+    ip link show dev "$bridge_name" >/dev/null 2>&1 || fail "Ingress bridge interface is unavailable"
+}
+
+delete_jumps() {
+    command_name=$1
+    chain_name=$2
+    for parent in DOCKER-USER FORWARD INPUT; do
+        while "$command_name" -w 5 -C "$parent" -j "$chain_name" >/dev/null 2>&1; do
+            "$command_name" -w 5 -D "$parent" -j "$chain_name"
+        done
+    done
+}
+
+remove_family() {
+    command_name=$1
+    delete_jumps "$command_name" "$FORWARD_CHAIN"
+    delete_jumps "$command_name" "$INPUT_CHAIN"
+    if "$command_name" -w 5 -n -L "$FORWARD_CHAIN" >/dev/null 2>&1; then
+        "$command_name" -w 5 -F "$FORWARD_CHAIN"
+        "$command_name" -w 5 -X "$FORWARD_CHAIN"
+    fi
+    if "$command_name" -w 5 -n -L "$INPUT_CHAIN" >/dev/null 2>&1; then
+        "$command_name" -w 5 -F "$INPUT_CHAIN"
+        "$command_name" -w 5 -X "$INPUT_CHAIN"
+    fi
+}
+
+remove_rules() {
+    for command_name in iptables ip6tables; do
+        if command -v "$command_name" >/dev/null 2>&1; then
+            remove_family "$command_name"
+        fi
+    done
+}
+
+apply_family() {
+    command_name=$1
+    reject_type=$2
+    allow_control=$3
+
+    "$command_name" -w 5 -N "$FORWARD_CHAIN" 2>/dev/null || true
+    "$command_name" -w 5 -N "$INPUT_CHAIN" 2>/dev/null || true
+    "$command_name" -w 5 -F "$FORWARD_CHAIN"
+    "$command_name" -w 5 -F "$INPUT_CHAIN"
+
+    "$command_name" -w 5 -A "$FORWARD_CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+    for engine_bridge in "$LOW_BRIDGE_NAME" "$MEDIUM_BRIDGE_NAME" "$HIGH_BRIDGE_NAME"; do
+        "$command_name" -w 5 -A "$FORWARD_CHAIN" -i "$engine_bridge" -o "$engine_bridge" -j RETURN
+        "$command_name" -w 5 -A "$FORWARD_CHAIN" -i "$engine_bridge" -j REJECT --reject-with "$reject_type"
+    done
+    "$command_name" -w 5 -A "$FORWARD_CHAIN" -i "$BRIDGE_NAME" -j REJECT --reject-with "$reject_type"
+    if [ "$allow_control" = "true" ]; then
+        "$command_name" -w 5 -A "$FORWARD_CHAIN" -i "$AGENT_BRIDGE_NAME" -d "$CONTROL_IP" -p tcp --dport "$CONTROL_PORT" -m conntrack --ctstate NEW -j RETURN
+    fi
+    "$command_name" -w 5 -A "$FORWARD_CHAIN" -i "$AGENT_BRIDGE_NAME" -j REJECT --reject-with "$reject_type"
+    "$command_name" -w 5 -A "$FORWARD_CHAIN" -j RETURN
+
+    for input_bridge in "$BRIDGE_NAME" "$LOW_BRIDGE_NAME" "$MEDIUM_BRIDGE_NAME" "$HIGH_BRIDGE_NAME" "$AGENT_BRIDGE_NAME"; do
+        "$command_name" -w 5 -A "$INPUT_CHAIN" -i "$input_bridge" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+        "$command_name" -w 5 -A "$INPUT_CHAIN" -i "$input_bridge" -j REJECT --reject-with "$reject_type"
+    done
+    "$command_name" -w 5 -A "$INPUT_CHAIN" -j RETURN
+
+    delete_jumps "$command_name" "$FORWARD_CHAIN"
+    delete_jumps "$command_name" "$INPUT_CHAIN"
+    # This narrow jump must precede host-level forwarding helpers (including
+    # Tailscale's ts-forward). DOCKER-USER is not sufficient on hosts where a
+    # helper chain can ACCEPT a packet before Docker reaches DOCKER-USER.
+    "$command_name" -w 5 -I FORWARD 1 -j "$FORWARD_CHAIN"
+    "$command_name" -w 5 -I INPUT 1 -j "$INPUT_CHAIN"
+}
+
+apply_rules() {
+    require_commands
+    validate_name "$PROJECT_NAME"
+    validate_ipv4 "$CONTROL_IP"
+    validate_port "$CONTROL_PORT"
+    validate_network "$NETWORK_NAME" "$BRIDGE_NAME" false public_ingress
+    validate_network "$LOW_NETWORK_NAME" "$LOW_BRIDGE_NAME" true low_ingress
+    validate_network "$MEDIUM_NETWORK_NAME" "$MEDIUM_BRIDGE_NAME" true medium_ingress
+    validate_network "$HIGH_NETWORK_NAME" "$HIGH_BRIDGE_NAME" true high_ingress
+    validate_network "$AGENT_NETWORK_NAME" "$AGENT_BRIDGE_NAME" false agent_egress
+    trap 'code=$?; trap - EXIT HUP INT TERM; set +e; remove_rules; exit "$code"' EXIT HUP INT TERM
+    apply_family iptables icmp-admin-prohibited true
+    apply_family ip6tables icmp6-adm-prohibited false
+    trap - EXIT HUP INT TERM
+}
+
+case "${1:-}" in
+    apply) apply_rules ;;
+    remove) remove_rules ;;
+    *) fail "Usage: system-metrics-egress apply|remove" ;;
+esac

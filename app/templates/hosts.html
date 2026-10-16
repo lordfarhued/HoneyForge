@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Хосты — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block section_name %}Хосты{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div><h1>Хосты</h1><p class="muted">Зарегистрированные устройства с отдельной mTLS-идентичностью агента.</p></div>
+  {% if user.role.value in ['admin', 'operator'] %}<a class="button primary" href="/hosts/enroll">Зарегистрировать хост</a>{% endif %}
+</header>
+<section class="panel data-panel hosts-panel">
+{% if hosts %}
+  <div class="table-wrap"><table class="data-table hosts-table">
+    <thead><tr><th>Хост</th><th>Адрес управления</th><th>Состояние агента</th><th>Ловушки</th><th>Последняя связь</th></tr></thead>
+    <tbody>
+    {% for host in hosts %}
+      <tr id="host-{{ host.id }}" data-host-id="{{ host.id }}">
+        <td><strong class="cell-title">{{ host.name }}</strong>{% if host.description %}<small class="cell-subtitle">{{ host.description }}</small>{% endif %}</td>
+        <td class="mono">{{ host.management_address }}</td>
+        <td><span class="status-pill status-{{ host.status.value }}" data-host-status-id="{{ host.id }}" aria-live="polite">{{ {'online':'Онлайн','offline':'Офлайн','degraded':'Нестабильно'}[host.status.value] }}</span></td>
+        <td><span class="technical-value">{{ host.instances|length }}</span></td>
+        <td class="event-time" data-host-last-seen-id="{{ host.id }}">{{ host.last_seen_at|moscow_time('Никогда') }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+{% else %}
+  <div class="empty-state"><h3>Никто не выходит на связь</h3><p>Создайте одноразовую регистрацию, чтобы подключить новый агент с собственной идентичностью.</p></div>
+{% endif %}
+</section>
+{% endblock %}

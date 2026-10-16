@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Профили — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block section_name %}Профили{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div><h1>Профили</h1><p class="muted">Наборы сервисов и параметров поведения Low- и Medium-ловушек.</p></div>
+  {% if user.role.value in ['admin', 'operator'] %}<a class="button primary" href="/profiles/new">Создать профиль</a>{% endif %}
+</header>
+<section class="panel data-panel profiles-panel">
+{% if profiles %}
+  <div class="table-wrap"><table class="data-table profiles-table sticky-last-column">
+    <thead><tr><th>Профиль</th><th>Уровень</th><th>Сервисы</th><th>Версия</th><th>Обновлён</th><th><span class="sr-only">Действия</span></th></tr></thead>
+    <tbody>
+    {% for profile in profiles %}
+      <tr>
+        <td><strong class="cell-title">{{ profile.name }}</strong><small class="cell-subtitle">{{ profile.description or 'Без описания' }}</small></td>
+        <td><span class="level level-{{ profile.interaction_level.value }}">{{ profile.interaction_level.value|upper }}</span></td>
+        <td>
+          {% if profile.services %}<div class="service-list">{% for service in profile.services %}<span class="service-chip">{{ service.get('name', service.get('protocol', 'service')) }}{% if service.get('port') %}:{{ service.get('port') }}{% endif %}</span>{% endfor %}</div>{% else %}<span class="muted">Не заданы</span>{% endif %}
+        </td>
+        <td class="mono">v{{ profile.config_version }}</td>
+        <td class="event-time">{{ profile.updated_at|moscow_time }}</td>
+        <td class="actions">
+          {% if user.role.value in ['admin', 'operator'] %}<a class="button secondary small" href="/profiles/{{ profile.id }}/edit">Изменить</a>{% endif %}
+          {% if user.role.value == 'admin' %}<form method="post" action="/profiles/{{ profile.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button danger small" type="submit" data-confirm="Удалить профиль «{{ profile.name }}»? Это действие нельзя отменить.">Удалить</button></form>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+{% else %}
+  <div class="empty-state"><h3>Профилей пока нет</h3><p>Создайте первый профиль, чтобы описать поведение Low- или Medium-ловушки.</p>{% if user.role.value in ['admin', 'operator'] %}<a class="button primary" href="/profiles/new">Создать профиль</a>{% endif %}</div>
+{% endif %}
+</section>
+{% endblock %}

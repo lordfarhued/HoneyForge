@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Предупреждения — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div><h1>Предупреждения</h1><p class="muted">Объяснимые срабатывания по реально сохранённым событиям.</p></div>
+  <span class="event-count">Найдено: {{ alerts|length }}</span>
+</header>
+
+<form class="panel event-filters" method="get" action="/alerts">
+  <label>Состояние
+    <select name="state"><option value="">Все</option>{% for state in states %}<option value="{{ state }}" {% if filters.state == state %}selected{% endif %}>{{ state }}</option>{% endfor %}</select>
+  </label>
+  <label>Уровень опасности
+    <select name="severity"><option value="">Все</option>{% for severity in severities %}<option value="{{ severity }}" {% if filters.severity == severity %}selected{% endif %}>{{ severity|upper }}</option>{% endfor %}</select>
+  </label>
+  <div class="filter-actions"><button class="button primary" type="submit">Применить</button><a class="button secondary" href="/alerts">Сбросить</a></div>
+</form>
+
+<section class="panel data-panel">
+{% if alerts %}
+  <div class="table-wrap"><table class="data-table alerts-table sticky-last-column">
+    <thead><tr><th>Время</th><th>Уровень</th><th>Состояние</th><th>Предупреждение</th><th>Источник</th><th>Событие</th></tr></thead>
+    <tbody>
+    {% for alert, external_id in alerts %}
+      <tr>
+        <td class="event-time">{{ alert.created_at|moscow_time }}</td>
+        <td><span class="level level-{{ alert.severity }}">{{ alert.severity|upper }}</span></td>
+        <td><span class="status-pill {{ 'status-error' if alert.state == 'open' else 'status-neutral' }}">{{ alert.state }}</span></td>
+        <td><strong class="cell-title">{{ alert.title }}</strong><small class="cell-subtitle">{{ alert.details.get('reason', 'Причина не указана') }}</small></td>
+        <td class="mono">{{ alert.details.get('source_ip') or '—' }}</td>
+        <td>{% if alert.event_id and external_id %}<a class="button secondary small alert-event-link" href="/events?event_id={{ alert.event_id }}" title="{{ external_id }}">{{ external_id }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+{% else %}
+  <div class="empty-state"><h3>Предупреждений нет</h3><p>Измените фильтры или дождитесь срабатывания контролируемой приманки.</p></div>
+{% endif %}
+</section>
+{% endblock %}

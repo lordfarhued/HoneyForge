@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Карта инфраструктуры — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/infrastructure-map.css?v=20261015.2">{% endblock %}
+{% macro agent_node(agent) %}
+<div class="node-wrap">
+  <button
+    class="topology-node agent-node"
+    type="button"
+    data-topology-node
+    data-node-id="agent-{{ agent.id }}"
+    data-node-kind="{{ agent.kind }}"
+    data-node-name="{{ agent.name }}"
+    data-node-status="{{ agent.status_label }}"
+    data-node-events="{{ agent.event_count }}"
+    data-node-last-activity="{{ agent.last_activity|moscow_time('Нет данных') }}"
+    data-detail-url="/hosts#host-{{ agent.id }}"
+    aria-pressed="false"
+  >
+    <span class="node-heading"><span class="node-icon" aria-hidden="true">{{ 'A' if agent.registered else 'H' }}</span><strong>{{ agent.name }}</strong></span>
+    <span class="status-pill {% if agent.status == 'online' %}status-online{% elif agent.status in ['offline', 'unavailable'] %}status-offline{% elif agent.status == 'degraded' %}status-degraded{% else %}status-neutral{% endif %}">{{ agent.status_label }}</span>
+    <span class="node-meta">Ловушек: {{ agent.traps|length }} · событий: {{ agent.event_count }}</span>
+  </button>
+  <a class="node-open-link" href="/hosts#host-{{ agent.id }}">Открыть хост</a>
+</div>
+{% endmacro %}
+{% macro trap_node(trap) %}
+<div class="node-wrap">
+  <button
+    class="topology-node trap-node level-border-{{ trap.level }}"
+    type="button"
+    data-topology-node
+    data-node-id="trap-{{ trap.id }}"
+    data-node-kind="Ловушка {{ trap.level|upper }}"
+    data-node-name="{{ trap.name }}"
+    data-node-status="{{ trap.status_label }}"
+    data-node-events="{{ trap.event_count }}"
+    data-node-last-activity="{{ trap.last_activity|moscow_time('Нет данных') }}"
+    data-detail-url="/traps#trap-{{ trap.id }}"
+    data-events-url="/events?instance_id={{ trap.id }}"
+    aria-pressed="false"
+  >
+    <span class="node-heading"><span class="node-icon" aria-hidden="true">{{ 'L' if trap.level == 'low' else 'M' }}</span><strong>{{ trap.name }}</strong></span>
+    <span><span class="level level-{{ trap.level }}">{{ trap.level|upper }}</span> <span class="status-pill {% if trap.status == 'online' %}status-online{% elif trap.status in ['offline', 'error'] %}status-offline{% elif trap.status == 'pending' %}status-pending{% else %}status-neutral{% endif %}">{{ trap.status_label }}</span></span>
+    <span class="node-meta">Событий: {{ trap.event_count }}</span>
+  </button>
+  <a class="node-open-link" href="/traps#trap-{{ trap.id }}">Открыть ловушку</a>
+</div>
+{% endmacro %}
+{% block content %}
+<header class="page-header">
+  <div><h1>Карта инфраструктуры</h1><p class="muted">Фактические регистрации, назначения и состояния из PostgreSQL. Линия к Center означает активную identity и свежий heartbeat.</p></div>
+  <div class="infrastructure-counters" aria-label="Сводка карты">
+    <span>Хостов <strong>{{ host_count }}</strong></span>
+    <span>Identity <strong>{{ registered_agent_count }}</strong></span>
+    <span>Активных связей <strong>{{ active_connection_count }}</strong></span>
+    <span>Ловушек <strong>{{ trap_count }}</strong></span>
+  </div>
+</header>
+
+<div class="infrastructure-layout">
+  <section class="panel topology-panel" aria-labelledby="topology-title">
+    <div class="panel-heading topology-heading">
+      <div><h2 id="topology-title">Center → Agents → Honeypots</h2><p>Нажмите узел для подробностей; повторный щелчок открывает существующий раздел.</p></div>
+      <div class="topology-legend" aria-label="Легенда"><span><i class="legend-dot online"></i>онлайн</span><span><i class="legend-dot offline"></i>офлайн</span><span><i class="legend-dot unknown"></i>нет связи</span></div>
+    </div>
+
+    <div class="topology-scroll">
+      <div class="topology-connected{% if not connected_agents %} without-connections{% endif %}">
+        <div class="center-stage">
+          <div class="node-wrap">
+            <button
+              class="topology-node center-node is-selected"
+              type="button"
+              data-topology-node
+              data-node-id="center"
+              data-node-kind="Center"
+              data-node-name="СЫРНЫЕ ШАРИКИ"
+              data-node-status="Доступен"
+              data-node-events="{{ event_count }}"
+              data-node-last-activity="Состояние на момент открытия"
+              data-detail-url="/"
+              aria-pressed="true"
+            >
+              <span class="node-heading"><span class="node-icon" aria-hidden="true">C</span><strong>Center</strong></span>
+              <span class="status-pill status-online">Доступен</span>
+              <span class="node-meta">Событий: {{ event_count }}</span>
+            </button>
+            <a class="node-open-link" href="/">Открыть обзор</a>
+          </div>
+        </div>
+
+        {% if connected_agents %}
+        <div class="agent-branches" aria-label="Агенты с активной связью">
+          {% for agent in connected_agents %}
+          <article class="agent-branch" data-agent-id="{{ agent.id }}" data-center-connected="true">
+            <span class="topology-edge center-agent-edge" data-edge-from="center" data-edge-to="agent-{{ agent.id }}" aria-hidden="true"></span>
+            {{ agent_node(agent) }}
+            {% if agent.traps %}
+            <div class="trap-branches">
+              {% for trap in agent.traps %}
+              <div class="trap-branch" data-assignment-host-id="{{ agent.id }}" data-assignment-trap-id="{{ trap.id }}">
+                <span class="topology-edge agent-trap-edge" data-edge-from="agent-{{ agent.id }}" data-edge-to="trap-{{ trap.id }}" aria-hidden="true"></span>
+                {{ trap_node(trap) }}
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}<p class="branch-empty">Ловушки не назначены</p>{% endif %}
+          </article>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="topology-empty-inline"><strong>Активных связей нет</strong><span>Зарегистрированные offline-агенты показаны ниже без линии к Center.</span></div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if disconnected_agents %}
+    <section class="disconnected-section" aria-labelledby="disconnected-title">
+      <div class="disconnected-heading"><h3 id="disconnected-title">Без активной связи с Center</h3><p>Линия к Center намеренно не рисуется. Назначения ловушек показаны только там, где они существуют в базе.</p></div>
+      <div class="disconnected-grid">
+        {% for agent in disconnected_agents %}
+        <article class="disconnected-agent" data-agent-id="{{ agent.id }}" data-center-connected="false">
+          {{ agent_node(agent) }}
+          {% if agent.traps %}
+          <div class="disconnected-traps">
+            {% for trap in agent.traps %}
+            <div class="disconnected-assignment" data-assignment-host-id="{{ agent.id }}" data-assignment-trap-id="{{ trap.id }}">
+              <span class="topology-edge assignment-edge" data-edge-from="agent-{{ agent.id }}" data-edge-to="trap-{{ trap.id }}" aria-hidden="true"></span>
+              {{ trap_node(trap) }}
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}<p class="branch-empty">Ловушки не назначены</p>{% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% elif not connected_agents %}
+    <div class="empty-state infrastructure-empty"><h3>Агенты ещё не зарегистрированы</h3><p>Карта заполнится реальными узлами после создания хоста и успешной регистрации identity.</p></div>
+    {% endif %}
+  </section>
+
+  <aside class="panel node-inspector" id="node-inspector" aria-live="polite">
+    <p class="eyebrow" id="node-detail-kind">Center</p>
+    <h2 id="node-detail-name">СЫРНЫЕ ШАРИКИ</h2>
+    <dl class="node-detail-list">
+      <div><dt>Состояние</dt><dd id="node-detail-status">Доступен</dd></div>
+      <div><dt>События</dt><dd id="node-detail-events">{{ event_count }}</dd></div>
+      <div><dt>Последняя активность</dt><dd id="node-detail-activity">Состояние на момент открытия</dd></div>
+    </dl>
+    <div class="node-detail-actions">
+      <a class="button primary" id="node-detail-open" href="/">Открыть раздел</a>
+      <a class="button secondary" id="node-detail-events-link" href="/events" hidden>События узла</a>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/infrastructure-map.js?v=20261014.1" defer></script>{% endblock %}

@@ -1,0 +1,64 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CORE=/usr/local/libexec/system-metrics-egress
+CONFIG=/etc/default/system-metrics-egress
+SERVICE=system-metrics-egress.service
+ROLLBACK_TIMER=system-metrics-egress-rollback.timer
+
+[ "$(id -u)" -eq 0 ] || { echo "Run as root." >&2; exit 1; }
+
+install_files() {
+    install -o root -g root -m 0755 "$SCRIPT_DIR/system-metrics-egress" "$CORE"
+    install -o root -g root -m 0644 "$SCRIPT_DIR/system-metrics-egress.service" /etc/systemd/system/
+    install -o root -g root -m 0644 "$SCRIPT_DIR/system-metrics-egress-rollback.service" /etc/systemd/system/
+    install -o root -g root -m 0644 "$SCRIPT_DIR/system-metrics-egress-rollback.timer" /etc/systemd/system/
+    if [ -n "${1:-}" ]; then
+        if [ "$1" != "$CONFIG" ]; then
+            install -o root -g root -m 0600 "$1" "$CONFIG"
+        else
+            chmod 0600 "$CONFIG"
+            chown root:root "$CONFIG"
+        fi
+    fi
+    [ -r "$CONFIG" ] || {
+        echo "Create $CONFIG from system-metrics-egress.default and set CONTROL_ENDPOINT_IP." >&2
+        exit 1
+    }
+    systemctl daemon-reload
+}
+
+case "${1:-}" in
+    install)
+        install_files "${2:-}"
+        systemctl enable --now "$ROLLBACK_TIMER"
+        if ! systemctl restart "$SERVICE"; then
+            systemctl stop "$SERVICE" >/dev/null 2>&1 || true
+            echo "Firewall policy was not installed; inspect Docker networks and $CONFIG." >&2
+            exit 1
+        fi
+        echo "Policy is active with automatic rollback in five minutes."
+        echo "Verify both SSH access and negative egress checks, then run: sudo $0 confirm"
+        ;;
+    confirm)
+        "$CORE" apply
+        systemctl is-active --quiet "$SERVICE"
+        systemctl disable --now "$ROLLBACK_TIMER"
+        systemctl enable "$SERVICE"
+        echo "Policy reapplied, verified by exit status, and enabled."
+        ;;
+    rollback)
+        systemctl disable --now "$ROLLBACK_TIMER" >/dev/null 2>&1 || true
+        systemctl disable --now "$SERVICE" >/dev/null 2>&1 || true
+        "$CORE" remove
+        echo "Owned firewall chains were removed; unrelated host rules were preserved."
+        ;;
+    status)
+        systemctl --no-pager status "$SERVICE"
+        ;;
+    *)
+        echo "Usage: $0 {install [config-file]|confirm|rollback|status}" >&2
+        exit 2
+        ;;
+esac

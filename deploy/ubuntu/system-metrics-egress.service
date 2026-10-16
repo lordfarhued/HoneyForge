@@ -1,0 +1,25 @@
+[Unit]
+Description=Restrict public relay egress
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/system-metrics-egress
+ExecStart=/usr/local/libexec/system-metrics-egress apply
+ExecStop=/usr/local/libexec/system-metrics-egress remove
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+PrivateTmp=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

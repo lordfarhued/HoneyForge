@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Регистрация хоста — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block section_name %}Регистрация хоста{% endblock %}
+{% block content %}
+<header class="page-header"><div><a class="back-link" href="/hosts">← К хостам</a><h1>Регистрация хоста</h1><p class="muted">Токен показывается один раз и действует не более 60 минут.</p></div></header>
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if token %}
+<section class="panel token-panel"><p class="eyebrow">Одноразовый токен</p><h2>{{ host.name }} / {{ instance.name }}</h2><p>Скопируйте токен в <code>secrets/agent/enrollment.token</code>. После успешного enrollment повторное использование невозможно.</p><textarea class="code token-output" rows="3" readonly>{{ token }}</textarea><p class="muted">Истекает: {{ expires_at|moscow_time }}</p><a class="button secondary" href="/hosts">Готово</a></section>
+{% else %}
+<form method="post" class="profile-form configuration-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><section class="panel form-section"><div class="section-number">01</div><div class="section-fields"><div class="form-section-heading"><h2>Хост и ловушка</h2><p>Новая identity агента и первый экземпляр ловушки.</p></div><div class="form-grid"><label>Имя хоста<input name="host_name" required minlength="3" maxlength="80" placeholder="ubuntu-lab-01"></label><label>Адрес управления<input name="management_address" required placeholder="ubuntu-lab-01.local"></label><label>Имя экземпляра<input name="instance_name" required minlength="3" maxlength="80" placeholder="low-web-01"></label><label>Профиль<select name="profile_id" required>{% for profile in profiles %}<option value="{{ profile.id }}">{{ profile.name }} · {{ profile.interaction_level.value|upper }} · v{{ profile.config_version }}</option>{% endfor %}</select></label><label>Срок токена, минут<input type="number" name="ttl_minutes" min="1" max="60" value="15" required></label></div></div></section>{% if profiles %}<div class="form-actions"><a class="button secondary" href="/hosts">Отмена</a><button class="button primary" type="submit">Создать токен</button></div>{% else %}<div class="alert alert-error">Сначала создайте профиль ловушки.</div>{% endif %}</form>
+{% endif %}
+{% endblock %}

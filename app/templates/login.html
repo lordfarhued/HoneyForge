@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — СЫРНЫЕ ШАРИКИ</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20261015.3">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <div class="login-brand"><img class="brand-image" src="/static/honeyforge-mark.jpg?v=20261011.13" width="40" height="40" alt=""><div><strong>СЫРНЫЕ ШАРИКИ</strong><small>Центр управления</small></div></div>
+    <h1>Вход в систему</h1>
+    <p class="muted">Совершенно обычная инфраструктура.</p>
+    {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+    <form method="post" action="/login" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Имя пользователя<input name="username" autocomplete="username" required autofocus></label>
+      <label>Пароль<input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="button primary" type="submit">Войти</button>
+    </form>
+    <p class="security-note">Сессия хранится в защищённой HttpOnly-cookie. Стандартного пароля нет.</p>
+  </main>
+</body>
+</html>

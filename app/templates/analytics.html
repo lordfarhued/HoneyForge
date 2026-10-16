@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Аналитика — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/source-analytics.css?v=20261015.2">{% endblock %}
+{% block content %}
+<header class="page-header analytics-page-header">
+  <div>
+    <h1>Аналитика источников</h1>
+    <p class="muted">Сводка по реально сохранённым событиям и предупреждениям. Риск — детерминированный эвристический показатель подозрительности, а не вероятность компрометации и не подтверждение личности атакующего.</p>
+  </div>
+  <div class="analytics-export-actions">
+    <a class="button secondary small" href="/events/export.json">Экспорт JSON</a>
+    <a class="button secondary small" href="/events/export.csv">Экспорт CSV</a>
+  </div>
+</header>
+
+<section class="source-kpi-grid" aria-label="Основные показатели">
+  <a class="source-kpi" href="/events"><span>События</span><strong>{{ total_events }}</strong><small>в сохранённой истории</small></a>
+  <a class="source-kpi" href="/events"><span>Наблюдаемые источники</span><strong>{{ unique_sources }}</strong><small>уникальные непустые source_ip</small></a>
+  <a class="source-kpi" href="/alerts?state=open"><span>Активные предупреждения</span><strong>{{ active_alerts }}</strong><small>состояние OPEN</small></a>
+</section>
+
+<div class="source-overview-grid">
+  <section class="panel protocol-breakdown" aria-labelledby="protocol-title">
+    <div class="panel-heading"><div><h2 id="protocol-title">Распределение активности</h2><p>Классификация по типу сохранённого события.</p></div></div>
+    <div class="protocol-bars">
+      {% for protocol in protocols %}
+      <div class="protocol-bar-row protocol-{{ protocol.code }}">
+        <strong class="protocol-bar-name">{{ protocol.label }}</strong>
+        <span class="protocol-bar-count">{{ protocol.count }} событий</span>
+        <span class="protocol-bar-percent">{{ protocol.percent }}%</span>
+        <div class="protocol-track" aria-label="{{ protocol.label }}: {{ protocol.percent }}%"><span style="width: {{ protocol.percent }}%"></span></div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="panel risk-method" aria-labelledby="risk-method-title">
+    <div class="panel-heading"><div><h2 id="risk-method-title">Правила оценки 0–100</h2><p>Сумма ограничивается 100; каждый признак имеет собственный предел.</p></div></div>
+    <ol>
+      <li><strong>Повторные отказы</strong><span>2–4: +15; 5–9: +25; 10 и более: +30.</span></li>
+      <li><strong>Административные пути</strong><span>+5 за событие, максимум +20.</span></li>
+      <li><strong>SSH-команды</strong><span>+5 за событие, максимум +25.</span></li>
+      <li><strong>Honeytoken</strong><span>+40 при связанном Alert, без роста от повторных alerts.</span></li>
+    </ol>
+  </section>
+</div>
+
+<section class="panel source-risk-panel" aria-labelledby="source-risk-title">
+  <div class="panel-heading">
+    <div><h2 id="source-risk-title">Наиболее активные источники</h2><p>До {{ source_limit }} источников по числу событий. IP — наблюдаемый адрес, а не достоверная личность.</p></div>
+  </div>
+  {% if sources %}
+  <div class="source-risk-list">
+    {% for source in sources %}
+    <article class="source-risk-card" data-source-ip="{{ source.source_ip }}" data-risk-score="{{ source.score }}">
+      <div class="source-risk-summary">
+        <div class="source-identity">
+          <a class="mono" href="{{ source.events_url }}">{{ source.source_ip }}</a>
+          <span>{{ source.event_count }} событий · последняя активность {{ source.last_activity|moscow_time }}</span>
+        </div>
+        <div class="risk-value risk-{{ source.level }}">
+          <strong>{{ source.score }}</strong><span>/ 100 · {{ source.level_label }}</span>
+        </div>
+      </div>
+      <div class="risk-meter" role="img" aria-label="Эвристический риск {{ source.score }} из 100"><span class="risk-fill risk-{{ source.level }}" style="width: {{ source.score }}%"></span></div>
+      {% if source.reasons %}
+      <ul class="risk-reasons">
+        {% for reason in source.reasons %}
+        <li data-risk-reason="{{ reason.code }}">
+          <div><strong>{{ reason.label }}</strong><small>{{ reason.rule }}</small></div>
+          <span class="risk-points">+{{ reason.points }}</span>
+          {% if reason.event_ids %}<div class="risk-evidence" aria-label="Связанные события">
+            {% for event_id in reason.event_ids %}<a href="/events?event_id={{ event_id }}">Событие {{ loop.index }}</a>{% endfor %}
+          </div>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="risk-empty">Признаков, повышающих балл по текущим правилам, не найдено.</p>
+      {% endif %}
+      <footer><a class="button secondary small" href="{{ source.events_url }}">Все события источника</a></footer>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state"><h3>История источников пуста</h3><p>Панель заполнится после сохранения реальных событий с непустым source_ip.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

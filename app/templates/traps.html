@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Ловушки — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block section_name %}Ловушки{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div><h1>Ловушки</h1><p class="muted">Состояние и конфигурация развёрнутых приманок.</p></div>
+  {% if user.role.value in ['admin', 'operator'] %}<a class="button primary" href="/traps/new">Добавить ловушку</a>{% endif %}
+</header>
+<section class="panel data-panel traps-panel">
+{% if traps %}
+<div class="table-wrap"><table class="data-table traps-table sticky-last-column">
+  <thead><tr><th>Ловушка</th><th>Хост</th><th>Профиль</th><th>Сервисы</th><th>Уровень / версия</th><th>Состояние</th><th>Последняя связь</th>{% if user.role.value in ['admin', 'operator'] %}<th>Управление</th>{% endif %}</tr></thead>
+  <tbody>
+  {% for trap in traps %}
+  {% set state = trap_statuses[trap.id] %}
+  <tr id="trap-{{ trap.id }}" data-trap-id="{{ trap.id }}">
+    <td><strong class="cell-title">{{ trap.name }}</strong></td>
+    <td>{{ trap.host.name }}</td>
+    <td><strong>{{ trap.profile.name }}</strong></td>
+    <td>{% if trap.profile.services %}<div class="service-list">{% for service in trap.profile.services %}<span class="service-chip">{{ service.get('protocol', 'tcp') }}:{{ service.get('port', '—') }}</span>{% endfor %}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
+    <td><span class="level level-{{ trap.profile.interaction_level.value }}">{{ trap.profile.interaction_level.value|upper }}</span> <span class="mono">v{{ trap.profile.config_version }}</span></td>
+    <td><span class="status-pill status-{{ state.status if state.status != 'unknown' else 'neutral' }}" data-trap-status-id="{{ trap.id }}" aria-live="polite">{{ {'online':'Онлайн','offline':'Офлайн','pending':'Ожидает','error':'Ошибка','unknown':'Неизвестно'}[state.status] }}</span><small class="cell-subtitle" data-trap-report-id="{{ trap.id }}">Движок: {{ {'online':'Онлайн','offline':'Офлайн','pending':'Ожидает','error':'Ошибка'}[state.reported_status.value] }} · агент: {{ {'online':'Онлайн','offline':'Офлайн','degraded':'Нестабильно'}[state.host_status.value] }}</small></td>
+    <td class="event-time" data-trap-last-seen-id="{{ trap.id }}">{{ trap.last_seen_at|moscow_time('Никогда') }}</td>
+    {% if user.role.value in ['admin', 'operator'] %}
+    <td>
+      <form method="post" action="/traps/{{ trap.id }}/action" class="inline-actions" data-job-form>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" name="command" value="start_trap" class="button success small" title="Поставить задание на запуск">Запустить</button>
+        <button type="submit" name="command" value="stop_trap" class="button danger small" title="Поставить задание на остановку" data-confirm="Поставить задание на остановку ловушки «{{ trap.name }}»?">Остановить</button>
+        <button type="submit" name="command" value="apply_config" class="button secondary small" title="Применить текущую версию профиля">Применить</button>
+      </form>
+    </td>
+    {% endif %}
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="empty-state"><h3>Пока ловить некого</h3><p>После регистрации хоста добавьте экземпляр и назначьте ему профиль.</p></div>
+{% endif %}
+</section>
+{% endblock %}

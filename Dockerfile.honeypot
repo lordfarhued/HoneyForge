@@ -1,0 +1,15 @@
+FROM python:3.12.15-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /engine
+COPY requirements-honeypot.txt ./
+RUN pip install --no-cache-dir -r requirements-honeypot.txt
+COPY honeypots ./honeypots
+RUN addgroup --system honeyforge-engine \
+    && adduser --system --ingroup honeyforge-engine --home /var/lib/honeyforge-engine honeyforge-engine \
+    && mkdir -p /run/honeyforge-config /var/lib/honeyforge-events /var/lib/honeyforge-medium /var/lib/honeyforge-high /tmp \
+    && chown -R honeyforge-engine:honeyforge-engine /engine /run/honeyforge-config /var/lib/honeyforge-events /var/lib/honeyforge-medium /var/lib/honeyforge-high /tmp
+USER honeyforge-engine

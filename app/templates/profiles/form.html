@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Изменение профиля' if profile else 'Новый профиль' }} — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block section_name %}{{ 'Изменение профиля' if profile else 'Новый профиль' }}{% endblock %}
+{% block content %}
+<header class="page-header"><div><a class="back-link" href="/profiles">← К профилям</a><h1>{{ 'Изменение профиля' if profile else 'Новый профиль' }}</h1><p class="muted">JSON-поля проходят строгую серверную валидацию.</p></div></header>
+{% if error %}<div class="alert alert-error"><strong>Профиль не сохранён.</strong><pre>{{ error }}</pre></div>{% endif %}
+<form method="post" class="profile-form configuration-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="panel form-section">
+    <div class="section-number">01</div><div class="section-fields"><div class="form-section-heading"><h2>Основное</h2><p>Имя, назначение и уровень взаимодействия.</p></div>
+      <div class="form-grid"><label>Название<input name="name" value="{{ form.name }}" minlength="3" maxlength="80" required></label><label>Уровень взаимодействия<select name="interaction_level"><option value="low" {% if form.interaction_level == 'low' %}selected{% endif %}>Low</option><option value="medium" {% if form.interaction_level == 'medium' %}selected{% endif %}>Medium</option><option value="high" {% if form.interaction_level == 'high' %}selected{% endif %}>High</option></select></label></div>
+      <label>Описание<textarea name="description" rows="3" maxlength="2000">{{ form.description }}</textarea></label>
+    </div>
+  </section>
+  <section class="panel form-section"><div class="section-number">02</div><div class="section-fields"><div class="form-section-heading"><h2>Сервисы и приманки</h2><p>Сетевые точки входа и контролируемые учётные данные. Для High нужны ровно два TCP-сервиса: http и ssh.</p></div><label>Сервисы (JSON-массив)<textarea class="code" name="services_json" rows="9" required>{{ form.services_json }}</textarea><small>name, protocol (tcp/udp), port (1–65535), banner</small></label><label>Учётные данные-приманки (JSON-массив)<textarea class="code" name="bait_credentials_json" rows="5" required>{{ form.bait_credentials_json }}</textarea></label></div></section>
+  <section class="panel form-section"><div class="section-number">03</div><div class="section-fields"><div class="form-section-heading"><h2>Наблюдение и маскировка</h2><p>Параметры журналирования и внешнего поведения ловушки.</p></div><div class="form-grid"><label>Логирование (JSON)<textarea class="code" name="logging_json" rows="9" required>{{ form.logging_json }}</textarea></label><label>Маскировка (JSON)<textarea class="code" name="masking_json" rows="9" required>{{ form.masking_json }}</textarea></label></div></div></section>
+  <div class="form-actions"><a class="button secondary" href="/profiles">Отмена</a><button class="button primary" type="submit">Сохранить профиль</button></div>
+</form>
+{% endblock %}

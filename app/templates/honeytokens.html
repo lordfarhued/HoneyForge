@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Honeytokens — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div><h1>Honeytokens</h1><p class="muted">Приманки для контролируемых HTTP-сценариев Medium. Исходное значение показывается только при создании.</p></div>
+</header>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if revealed_token %}
+<section class="panel token-panel" id="honeytoken-reveal">
+  <p class="eyebrow">Показать один раз</p>
+  <h2>Новый honeytoken</h2>
+  <p>Скопируйте значение сейчас. Центр хранит только SHA-256 и не сможет показать его повторно.</p>
+  <textarea class="code token-output" rows="3" readonly>{{ revealed_token }}</textarea>
+</section>
+{% endif %}
+
+<div class="honeytoken-workspace{% if honeytokens %} has-items{% else %} is-empty{% endif %}">
+<section class="panel form-panel compact-form-panel honeytoken-create-panel">
+  <div class="panel-heading"><div><h2>Создать honeytoken</h2><p>Токен предназначен для query string или другого поля контролируемого Medium HTTP-запроса.</p></div></div>
+  <form method="post" action="/honeytokens" class="stacked-form honeytoken-create-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Название<input name="name" required minlength="3" maxlength="80" placeholder="admin-link-canary"></label>
+    <label>Уровень предупреждения
+      <select name="severity">{% for severity in severities %}<option value="{{ severity }}" {% if severity == 'high' %}selected{% endif %}>{{ severity|upper }}</option>{% endfor %}</select>
+    </label>
+    <div class="form-actions"><button class="button primary" type="submit">Создать и показать один раз</button></div>
+  </form>
+</section>
+
+{% if not honeytokens %}
+<section class="panel honeytoken-empty-panel">
+  <div class="empty-state compact"><h3>Honeytokens пока нет</h3><p>Создайте первую приманку для контролируемой проверки Medium HTTP. Её значение будет показано только один раз.</p></div>
+</section>
+{% endif %}
+</div>
+
+{% if honeytokens %}
+<section class="panel data-panel honeytoken-list-panel">
+  <div class="table-wrap"><table class="data-table sticky-last-column">
+    <thead><tr><th>Название</th><th>Тип</th><th>Уровень</th><th>Состояние</th><th>Создан</th><th><span class="sr-only">Действия</span></th></tr></thead>
+    <tbody>
+    {% for honeytoken in honeytokens %}
+      <tr>
+        <td><strong>{{ honeytoken.name }}</strong></td>
+        <td class="mono">{{ honeytoken.token_type }}</td>
+        <td><span class="level level-{{ honeytoken.metadata_json.get('alert_severity', 'high') }}">{{ honeytoken.metadata_json.get('alert_severity', 'high')|upper }}</span></td>
+        <td><span class="status-pill {{ 'status-online' if honeytoken.is_active else 'status-offline' }}">{{ 'Активен' if honeytoken.is_active else 'Отключён' }}</span></td>
+        <td class="event-time">{{ honeytoken.created_at|moscow_time }}</td>
+        <td class="actions">
+          <form method="post" action="/honeytokens/{{ honeytoken.id }}/state">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="active" value="{{ 'false' if honeytoken.is_active else 'true' }}">
+            <button class="button {{ 'danger' if honeytoken.is_active else 'success' }} small" type="submit">{{ 'Деактивировать' if honeytoken.is_active else 'Активировать' }}</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endblock %}

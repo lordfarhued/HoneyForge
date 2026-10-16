@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Обзор — СЫРНЫЕ ШАРИКИ{% endblock %}
+{% block section_name %}Обзор{% endblock %}
+{% block content %}
+<header class="page-header dashboard-header">
+  <div><h1>Обзор</h1><p class="muted">Мониторинг ловушек, подключённых агентов и событий безопасности в реальном времени.</p></div>
+</header>
+
+<section class="kpi-strip" aria-label="Ключевые показатели">
+  <a class="kpi-item kpi-hosts" href="/hosts">
+    <span class="kpi-label">Хосты</span>
+    <svg class="kpi-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="1"/><rect x="4" y="14" width="16" height="6" rx="1"/><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>
+    <strong class="kpi-value">{{ counts.hosts }}</strong>
+    <small class="kpi-meta">зарегистрировано</small>
+  </a>
+  <a class="kpi-item kpi-traps" href="/traps">
+    <span class="kpi-label">Ловушки</span>
+    <svg class="kpi-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+    <strong class="kpi-value">{{ counts.traps }}</strong>
+    <small class="kpi-meta">всего</small>
+  </a>
+  <a class="kpi-item kpi-events" href="/events">
+    <span class="kpi-label">События</span>
+    <svg class="kpi-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5-7 5 14 2.5-7h4"/></svg>
+    <strong class="kpi-value" id="period-event-count">—</strong>
+    <small class="kpi-meta" id="period-event-label">за 7 дней</small>
+  </a>
+  <a class="kpi-item kpi-sources" href="/events">
+    <span class="kpi-label">Источники</span>
+    <svg class="kpi-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7"/></svg>
+    <strong class="kpi-value" id="unique-source-count">—</strong>
+    <small class="kpi-meta">уникальные IP</small>
+  </a>
+</section>
+
+<div class="analytics-notice" id="analytics-notice" role="status" aria-live="polite">Загрузка аналитики…</div>
+
+<section class="analytics-grid analytics-primary" aria-label="Основная аналитика">
+  <article class="panel analytics-wide">
+    <div class="panel-heading">
+      <div><h2>Активность событий</h2><p id="activity-scope">Реальные события, время МСК</p></div>
+      <div class="period-switch" id="period-switch" aria-label="Период аналитики">
+        <button type="button" data-period="1" aria-pressed="false">24 часа</button>
+        <button type="button" data-period="7" aria-pressed="true">7 дней</button>
+        <button type="button" data-period="30" aria-pressed="false">30 дней</button>
+      </div>
+    </div>
+    <div class="activity-chart analytics-chart" id="activity-chart" role="img" aria-label="Активность событий за выбранный период"><div class="analytics-empty">Загрузка данных…</div></div>
+  </article>
+
+  <article class="panel protocol-panel">
+    <div class="panel-heading"><div><h2>Распределение по протоколам</h2><p>По событиям выбранного периода</p></div></div>
+    <div class="protocol-content" id="protocol-content"><div class="analytics-empty">Загрузка данных…</div></div>
+  </article>
+</section>
+
+<section class="analytics-grid operational-grid" aria-label="Оперативные события и источники">
+  <article class="panel analytics-wide">
+    <div class="panel-heading">
+      <div><h2>Последние события</h2><p>Оперативный поток с подключённых ловушек.</p></div>
+      <a class="button secondary small" href="/events">Все события</a>
+    </div>
+    {% if recent_events %}<div class="event-feed-head" aria-hidden="true"><span>Тип</span><span>Источник</span><span>Метка</span><span>Время</span></div>{% endif %}
+    <div id="event-feed" class="event-feed">
+    {% if recent_events %}
+      {% for event in recent_events[:8] %}
+      {% set event_type = event.event_type|lower %}
+      <div class="event-row" data-event-id="{{ event.external_id }}" data-created-at="{{ event.created_at.isoformat() }}">
+        <span class="event-type {% if 'http' in event_type %}event-type-http{% elif 'ssh' in event_type %}event-type-ssh{% elif 'udp' in event_type %}event-type-udp{% elif 'tcp' in event_type or 'connection' in event_type %}event-type-tcp{% else %}event-type-unknown{% endif %}">{{ event.event_type }}</span>
+        <span class="mono">{{ event.source_ip or 'не указан' }}</span>
+        {% if event.is_test %}<span class="level level-medium">ТЕСТ</span>{% else %}<span></span>{% endif %}
+        <small>{{ event.occurred_at|moscow_time }}</small>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div id="event-empty" class="empty-state"><h3>Подозрительно тихо</h3><p>Новые данные появятся после активности на подключённых ловушках. Тестовые события будут явно отмечены.</p></div>
+    {% endif %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-heading"><div><h2>Топ источников</h2><p>До пяти наиболее активных IP</p></div></div>
+    <div class="top-sources" id="top-sources"><div class="analytics-empty">Загрузка данных…</div></div>
+  </article>
+</section>
+
+<section class="analytics-grid analytics-secondary" aria-label="Источники и состояние хостов">
+  <article class="panel analytics-wide">
+    <div class="panel-heading"><div><h2>Уникальные источники</h2><p>Количество различных IP по интервалам</p></div></div>
+    <div class="source-chart analytics-chart" id="source-chart" role="img" aria-label="Уникальные источники за выбранный период"><div class="analytics-empty">Загрузка данных…</div></div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-heading"><div><h2>Состояние хостов</h2><p>Данные существующего API</p></div><a class="button secondary small" href="/hosts">Все хосты</a></div>
+    <div class="host-summary" id="host-summary"><div class="analytics-empty">Загрузка данных…</div></div>
+  </article>
+</section>
+
+<section class="panel audit-panel">
+  <div class="panel-heading"><div><h2>Последние административные действия</h2><p>Журнал изменений центра.</p></div></div>
+  {% if recent %}
+    <ul class="audit-list">
+    {% for entry in recent %}
+      <li><span class="audit-mark"></span><div><strong title="{{ entry.action }}">{{ entry.action }}</strong><small>{{ entry.entity_type }} · {{ entry.created_at|moscow_time }}</small></div></li>
+    {% endfor %}
+    </ul>
+  {% else %}
+    <div class="empty-state compact"><h3>Журнал пуст</h3><p>Первая запись появится после входа или изменения данных.</p></div>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/events.js?v=20261015.1" defer></script>{% endblock %}
